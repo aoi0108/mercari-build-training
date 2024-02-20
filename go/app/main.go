@@ -37,28 +37,25 @@ func root(c echo.Context) error {
 	return c.JSON(http.StatusOK, res)
 }
 
-func loadItemsFromFile() ([]Item, error){
-	var items Items
-	data, err := ioutil.ReadFile(ItemsFile)
 
-	if err != nil {
-		return nil, err
-	}
-
-	err = json.Unmarshal(data, &items)
-	if err != nil {
-		return nil, err
-	}
-
-	return items.Items, nil
-}
 
 func getItems(c echo.Context) error{
-	items, err := loadItemsFromFile()
+	jsonFile, err := os.Open(ItemsFile)
 	if err != nil{
-		return err
+		return c.JSON(http.StatusBadRequest,err)
 	}
-	return c.JSON(http.StatusOK, Items{Items:items})
+	defer jsonFile.Close()
+
+	jsonData, err := readItems()
+	if err != nil{
+		return c.JSON(http.StatusInternalServerError,err)
+	}
+
+	var items Items
+
+	json.Unmarshal(jsonData, &items)
+
+	return c.JSON(http.StatusOK, items)
 }
 
 func addItem(c echo.Context) error {
@@ -88,6 +85,23 @@ func getImg(c echo.Context) error {
 		imgPath = path.Join(ImgDir, "default.jpg")
 	}
 	return c.File(imgPath)
+}
+
+func readItems() ([]byte, error){
+	jsonFile, err := os.Open(ItemsFile)
+	if err != nil{
+		return nil, err
+	}
+
+	defer jsonFile.Close()
+
+	jsonData, err := ioutil.ReadAll(jsonFile)
+	if err != nil{
+		return nil, err
+	}
+
+	return jsonData, nil
+
 }
 
 func main() {
