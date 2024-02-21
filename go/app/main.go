@@ -7,7 +7,10 @@ import (
 	"path"
 	"strings"
 	"encoding/json"
+	"io"
 	"io/ioutil"
+	"mime/multipart"
+	"crypto/sha256"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -16,12 +19,14 @@ import (
 
 const (
 	ImgDir = "images"
+	ImgDirRelative = "../"+ ImgDir
 	ItemsFile = "./items.json"
 )
 
 type Item struct {
 	Name string `json:"name"`
 	Category string `json:"category"`
+	ImageFileName string `json:"imageFileName"`
 }
 
 type Items struct {
@@ -85,6 +90,67 @@ func getImg(c echo.Context) error {
 		imgPath = path.Join(ImgDir, "default.jpg")
 	}
 	return c.File(imgPath)
+}
+
+func updateJson(name string, category string, image *multipart.FileHeader) error{
+	hashedFileName := sha256.Sum256([]byte(image.Filename))
+	ext := path.Ext(image.Filename)
+	if ext != ".jpg"{
+		return fmt.Errorf("image extension is not jpg")
+
+	}
+
+	jsonFile, err := os.Open(ItemsFile)
+	if err != nil{
+		return err
+	}
+
+	defer jsonFile.Close()
+
+	jsonData, err := readItems()
+	if err != nil{
+		return err
+	}
+
+	var items Items
+
+	json.Unmarshal(jsonData, &items)
+	items.Items = append(items.Items, Item{Name: name, Category: category, ImageFileName: fmt.Sprintf("%x%s", hashedFileName, ext)})
+	marshaled, err := json.Marshal(items)
+	if err != nil{
+		return err
+	}
+	if err = ioutil.WriteFile(ItemsFile, marshaled, 0644); err != nil{
+		return err
+	}
+
+	return nil
+
+
+}
+
+func saveImage(image *multipart.FileHeader){
+	src, err := image.Open()
+	if err != nil{
+		fmt.Println("Cannot open image: ",err)
+		return 
+	}
+	defer src.Close()
+
+	hashedName := sha256.Sum256([]byte(image.Filename))
+	imgPath := path.Join(ImgDirRelative, fmt.Sprintf("%x.jpg", hashedName))
+
+	dst, err := os.Create(imgPath)
+	if err != nil{
+		fmt.Println("Cannot create image: ",err)
+		return 
+	}
+	defer dst.Close()
+
+	if _, err = io.Copy(dst, src); err != nil{
+		fmt.Println("Cannot copy image: ",err)
+		return 
+	}
 }
 
 func readItems() ([]byte, error){
