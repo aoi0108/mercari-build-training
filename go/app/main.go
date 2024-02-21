@@ -7,9 +7,8 @@ import (
 	"path"
 	"strings"
 	"encoding/json"
+	"encoding/hex"
 	"io"
-	"io/ioutil"
-	"mime/multipart"
 	"crypto/sha256"
 	"strconv"
 
@@ -20,7 +19,6 @@ import (
 
 const (
 	ImgDir = "images"
-	ImgDirRelative = "../"+ ImgDir
 )
 
 type Item struct {
@@ -43,33 +41,65 @@ func root(c echo.Context) error {
 }
 
 func addItem(c echo.Context) error {
+	var items Items
 	// Get form data
 	name := c.FormValue("name")
 	category := c.FormValue("category")
-	image, error := c.FormFile("image")
-	if error != nil {
-		return c.JSON(http.StatusBadRequest, error)
+	image, err := c.FormFile("image")
+	if err != nil {
+		return err
 	}
 
-	c.Logger().Infof("Receive item: %s",name)
-	c.Logger().Infof("Receive category: %s",category)
-	c.Logger().Infof("Receive image: %s",image.Filename)
+	src, err := image.Open()
+	if err != nil{
+		return err
+	}
+	defer src.Close()
 
-	updateJson(name, category,image)
-	saveImage(image)
+	hash := sha256.New()
+	hashInBytes := hash.Sum(nil)
 
+	hashString := hex.EncodeToString(hashInBytes)
 
-	message := fmt.Sprintf("item received: %s", name)
-	res := Response{Message: message}
+	image_jpg := hashString +".jpg"
 
+	new_image, err := os.Create("images/"+image_jpg)
+	if err != nil{
+		return err
+	}
 
+	if _, err := io.Copy(new_image, src); err != nil{
+		return err
+	}
 
+	item := Item{Name: name, Category: category, Image: image_jpg}
+	c.Logger().Infof("Receive item: %s, %s", item.Name, item.Category, item.Image)
+	message := fmt.Sprintf("item received: %s, %s, %s", item.Name, item.Category, item.Image)
+
+	res := Response{Message :message}
+	items.Items = append(items.Items, item)
+
+	f, err := os.OpenFile("items.json",os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil{
+		return err
+	}
+	defer f.Close()
+
+	output, err := json.Marshal(&items)
+	if err != nil{
+		return err
+	}
+
+	_, err = f.Write(output)
+	if err != nil{
+		return err
+	}
 	return c.JSON(http.StatusOK, res)
 }
 
 func getImg(c echo.Context) error {
 	// Create image path
-	imgPath := path.Join(ImgDir, c.Param("image"))
+	imgPath := path.Join(ImgDir, c.Param("imageFilename"))
 
 	if !strings.HasSuffix(imgPath, ".jpg") {
 		res := Response{Message: "Image path does not end with .jpg"}
@@ -86,24 +116,16 @@ func getImg(c echo.Context) error {
 
 
 func getItems(c echo.Context) error{
-	jsonFile, err := os.Open("items.json")
-	if err != nil{
-		return c.JSON(http.StatusBadRequest,err)
-	}
-	defer jsonFile.Close()
-
-	jsonData, err := readItems()
-	if err != nil{
-		return c.JSON(http.StatusInternalServerError,err)
-	}
-
 	var items Items
-	json.Unmarshal(jsonData, &items)
-
-	for i := range items.Items {
-        items.Items[i].Image = items.Items[i].Image
-        items.Items[i].Image = ""
-    }
+	jsonBytes, err := os.ReadFile("items.json")
+	if err != nil{
+		return err
+	}
+	
+	err = json.Unmarshal(jsonBytes, &items)
+	if err != nil{
+		return err
+	}
 
 	return c.JSON(http.StatusOK, items)
 }
@@ -136,83 +158,6 @@ func getItemsById(c echo.Context) error{
 }
 
 
-func updateJson(name string, category string, image *multipart.FileHeader) error{
-
-	jsonData, err := readItems()
-	 if err != nil {
-		 return err
-	}
-
-	var items Items
-	if err := json.Unmarshal(jsonData, &items); err != nil {
-		 return err
-	}
-
-	hashedFileName := sha256.Sum256([]byte(image.Filename))
-	ext := path.Ext(image.Filename)
-	if ext != ".jpg"{
-		return fmt.Errorf("image extension is not jpg")
-
-	}
-
-
-	newItem := Item{Name: name, Category: category, Image: fmt.Sprintf("%x%s", hashedFileName, ext)}
-	items.Items = append(items.Items, newItem)
-	
-	jsonData, err = json.Marshal(items)
-    if err != nil {
-        return err
-    }
-
-	if err = ioutil.WriteFile("items.json", jsonData, 0644); err != nil{
-		return err
-	}
-
-	return nil
-
-
-}
-
-func saveImage(image *multipart.FileHeader){
-	src, err := image.Open()
-	if err != nil{
-		fmt.Println("Cannot open image: ",err)
-		return 
-	}
-	defer src.Close()
-
-	hashedName := sha256.Sum256([]byte(image.Filename))
-	imgPath := path.Join(ImgDirRelative, fmt.Sprintf("%x.jpg", hashedName))
-
-	dst, err := os.Create(imgPath)
-	if err != nil{
-		fmt.Println("Cannot create image: ",err)
-		return 
-	}
-	defer dst.Close()
-
-	if _, err = io.Copy(dst, src); err != nil{
-		fmt.Println("Cannot copy image: ",err)
-		return 
-	}
-}
-
-func readItems() ([]byte, error){
-	jsonFile, err := os.Open("items.json")
-	if err != nil{
-		return nil, err
-	}
-
-	defer jsonFile.Close()
-
-	jsonData, err := ioutil.ReadAll(jsonFile)
-	if err != nil{
-		return nil, err
-	}
-
-	return jsonData, nil
-
-}
 
 func main() {
 	e := echo.New()
@@ -233,10 +178,11 @@ func main() {
 
 	// Routes
 	e.GET("/", root)
-	e.GET("/items",getItems)
-	e.GET("/items/:id",getItemsById)
 	e.POST("/items", addItem)
-	e.GET("/image/:image", getImg)
+	e.GET("/items",getItems)
+	e.GET("/image/:imageFilename", getImg)
+	e.GET("/items/:id",getItemsById)
+
 
 
 	// Start server
