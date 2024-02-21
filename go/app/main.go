@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"mime/multipart"
 	"crypto/sha256"
+	"strconv"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -20,13 +21,13 @@ import (
 const (
 	ImgDir = "images"
 	ImgDirRelative = "../"+ ImgDir
-	ItemsFile = "./items.json"
+	ItemsFile = "items.json"
 )
 
 type Item struct {
 	Name string `json:"name"`
 	Category string `json:"category"`
-	ImageFileName string `json:"imageFileName"`
+	Image string `json:"image"`
 }
 
 type Items struct {
@@ -61,6 +62,33 @@ func getItems(c echo.Context) error{
 	json.Unmarshal(jsonData, &items)
 
 	return c.JSON(http.StatusOK, items)
+}
+
+func getItemsById(c echo.Context) error{
+	id, _ := strconv.Atoi(c.Param("id"))
+	jsonFile, err := os.Open(ItemsFile)
+	if err != nil{
+		c.Logger().Errorf("Error opening file: %s", err)
+		res := Response{Message: "Error opening file"}
+		return c.JSON(http.StatusInternalServerError,res)
+	}
+
+	defer jsonFile.Close()
+
+	jsonData := Items{}
+	err = json.NewDecoder(jsonFile).Decode(&jsonData)
+	if err != nil{
+		c.Logger().Errorf("Error decoding file: %s", err)
+		res := Response{Message: "Error decoding file"}
+
+		return c.JSON(http.StatusInternalServerError, res)
+	}
+
+	return c.JSON(http.StatusOK, jsonData.Items[id-1])
+
+
+
+
 }
 
 func addItem(c echo.Context) error {
@@ -115,7 +143,7 @@ func updateJson(name string, category string, image *multipart.FileHeader) error
 	var items Items
 
 	json.Unmarshal(jsonData, &items)
-	items.Items = append(items.Items, Item{Name: name, Category: category, ImageFileName: fmt.Sprintf("%x%s", hashedFileName, ext)})
+	items.Items = append(items.Items, Item{Name: name, Category: category, Image: fmt.Sprintf("%x%s", hashedFileName, ext)})
 	marshaled, err := json.Marshal(items)
 	if err != nil{
 		return err
@@ -190,6 +218,7 @@ func main() {
 	// Routes
 	e.GET("/", root)
 	e.GET("/items",getItems)
+	e.GET("/items/:id",getItemsById)
 	e.POST("/items", addItem)
 	e.GET("/image/:imageFilename", getImg)
 
