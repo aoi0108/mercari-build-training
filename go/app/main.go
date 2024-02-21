@@ -21,13 +21,12 @@ import (
 const (
 	ImgDir = "images"
 	ImgDirRelative = "../"+ ImgDir
-	ItemsFile = "items.json"
 )
 
 type Item struct {
 	Name string `json:"name"`
 	Category string `json:"category"`
-	Image string `json:"image"`
+	Image string `json:"image_name"`
 }
 
 type Items struct {
@@ -43,10 +42,51 @@ func root(c echo.Context) error {
 	return c.JSON(http.StatusOK, res)
 }
 
+func addItem(c echo.Context) error {
+	// Get form data
+	name := c.FormValue("name")
+	category := c.FormValue("category")
+	image, error := c.FormFile("image")
+	if error != nil {
+		return c.JSON(http.StatusBadRequest, error)
+	}
+
+	c.Logger().Infof("Receive item: %s",name)
+	c.Logger().Infof("Receive category: %s",category)
+	c.Logger().Infof("Receive image: %s",image.Filename)
+
+	updateJson(name, category,image)
+	saveImage(image)
+
+
+	message := fmt.Sprintf("item received: %s", name)
+	res := Response{Message: message}
+
+
+
+	return c.JSON(http.StatusOK, res)
+}
+
+func getImg(c echo.Context) error {
+	// Create image path
+	imgPath := path.Join(ImgDir, c.Param("image"))
+
+	if !strings.HasSuffix(imgPath, ".jpg") {
+		res := Response{Message: "Image path does not end with .jpg"}
+		return c.JSON(http.StatusBadRequest, res)
+	}
+	if _, err := os.Stat(imgPath); err != nil {
+		c.Logger().Debugf("Image not found: %s", imgPath)
+		imgPath = path.Join(ImgDir, "default.jpg")
+	}
+	return c.File(imgPath)
+}
+
+
 
 
 func getItems(c echo.Context) error{
-	jsonFile, err := os.Open(ItemsFile)
+	jsonFile, err := os.Open("items.json")
 	if err != nil{
 		return c.JSON(http.StatusBadRequest,err)
 	}
@@ -58,15 +98,19 @@ func getItems(c echo.Context) error{
 	}
 
 	var items Items
-
 	json.Unmarshal(jsonData, &items)
+
+	for i := range items.Items {
+        items.Items[i].Image = items.Items[i].Image
+        items.Items[i].Image = ""
+    }
 
 	return c.JSON(http.StatusOK, items)
 }
 
 func getItemsById(c echo.Context) error{
 	id, _ := strconv.Atoi(c.Param("id"))
-	jsonFile, err := os.Open(ItemsFile)
+	jsonFile, err := os.Open("items.json")
 	if err != nil{
 		c.Logger().Errorf("Error opening file: %s", err)
 		res := Response{Message: "Error opening file"}
@@ -91,36 +135,19 @@ func getItemsById(c echo.Context) error{
 
 }
 
-func addItem(c echo.Context) error {
-	// Get form data
-	name := c.FormValue("name")
-	//category := c.FormValue("category")
-
-
-	message := fmt.Sprintf("item received: %s", name)
-	res := Response{Message: message}
-
-
-
-	return c.JSON(http.StatusOK, res)
-}
-
-func getImg(c echo.Context) error {
-	// Create image path
-	imgPath := path.Join(ImgDir, c.Param("imageFilename"))
-
-	if !strings.HasSuffix(imgPath, ".jpg") {
-		res := Response{Message: "Image path does not end with .jpg"}
-		return c.JSON(http.StatusBadRequest, res)
-	}
-	if _, err := os.Stat(imgPath); err != nil {
-		c.Logger().Debugf("Image not found: %s", imgPath)
-		imgPath = path.Join(ImgDir, "default.jpg")
-	}
-	return c.File(imgPath)
-}
 
 func updateJson(name string, category string, image *multipart.FileHeader) error{
+
+	jsonData, err := readItems()
+	 if err != nil {
+		 return err
+	}
+
+	var items Items
+	if err := json.Unmarshal(jsonData, &items); err != nil {
+		 return err
+	}
+
 	hashedFileName := sha256.Sum256([]byte(image.Filename))
 	ext := path.Ext(image.Filename)
 	if ext != ".jpg"{
@@ -128,27 +155,16 @@ func updateJson(name string, category string, image *multipart.FileHeader) error
 
 	}
 
-	jsonFile, err := os.Open(ItemsFile)
-	if err != nil{
-		return err
-	}
 
-	defer jsonFile.Close()
+	newItem := Item{Name: name, Category: category, Image: fmt.Sprintf("%x%s", hashedFileName, ext)}
+	items.Items = append(items.Items, newItem)
+	
+	jsonData, err = json.Marshal(items)
+    if err != nil {
+        return err
+    }
 
-	jsonData, err := readItems()
-	if err != nil{
-		return err
-	}
-
-	var items Items
-
-	json.Unmarshal(jsonData, &items)
-	items.Items = append(items.Items, Item{Name: name, Category: category, Image: fmt.Sprintf("%x%s", hashedFileName, ext)})
-	marshaled, err := json.Marshal(items)
-	if err != nil{
-		return err
-	}
-	if err = ioutil.WriteFile(ItemsFile, marshaled, 0644); err != nil{
+	if err = ioutil.WriteFile("items.json", jsonData, 0644); err != nil{
 		return err
 	}
 
@@ -182,7 +198,7 @@ func saveImage(image *multipart.FileHeader){
 }
 
 func readItems() ([]byte, error){
-	jsonFile, err := os.Open(ItemsFile)
+	jsonFile, err := os.Open("items.json")
 	if err != nil{
 		return nil, err
 	}
@@ -220,7 +236,7 @@ func main() {
 	e.GET("/items",getItems)
 	e.GET("/items/:id",getItemsById)
 	e.POST("/items", addItem)
-	e.GET("/image/:imageFilename", getImg)
+	e.GET("/image/:image", getImg)
 
 
 	// Start server
