@@ -5,18 +5,19 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
-	"encoding/json"
+	"strconv"
+	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"io"
-	"crypto/sha256"
-	"strconv"
-	"database/sql"
+
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/labstack/gommon/log"
+
+	//_"github.com/mattn/go-sqlite3"
 )
 
 const (
@@ -48,7 +49,7 @@ func addItem(c echo.Context) error {
 	name := c.FormValue("name")
 	category := c.FormValue("category")
 	image, err := c.FormFile("image")
-	if err != nil {
+	if err != nil{
 		return err
 	}
 
@@ -59,13 +60,14 @@ func addItem(c echo.Context) error {
 	defer src.Close()
 
 	hash := sha256.New()
+
 	hashInBytes := hash.Sum(nil)
 
 	hashString := hex.EncodeToString(hashInBytes)
 
-	image_jpg := hashString +".jpg"
+	image_jpg := hashString + ".jpg"
 
-	new_image, err := os.Create("images/"+image_jpg)
+	new_image, err := os.Create("images/" + image_jpg)
 	if err != nil{
 		return err
 	}
@@ -75,27 +77,52 @@ func addItem(c echo.Context) error {
 	}
 
 	item := Item{Name: name, Category: category, Image: image_jpg}
+
+
 	c.Logger().Infof("Receive item: %s, %s", item.Name, item.Category, item.Image)
 	message := fmt.Sprintf("item received: %s, %s, %s", item.Name, item.Category, item.Image)
+	
+	res := Response{Message: message}
 
-	res := Response{Message :message}
 	items.Items = append(items.Items, item)
 
-	f, err := os.OpenFile("items.json",os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil{
-		return err
-	}
-	defer f.Close()
+	db, err := sql.Open("sqlite3","/Users/hiramatsuaoi/Documents/mercari-build-training/db/mercari.sqlite3")
 
-	output, err := json.Marshal(&items)
 	if err != nil{
 		return err
+	}
+	defer db.Close()
+
+	var categoryID int
+
+	cmd := "SELECT id FROM categories WHERE name = $1"
+	row := db.QueryRow(cmd, item.Category)
+	err = row.Scan(&categoryID)
+	if err != nil{
+		if err == sql.ErrNoRows{
+			_, err = db.Exec("INSERT INTO categories (name) VALUES ($1)", item.Category)
+			if err != nil{
+				return err
+			}
+			row := db.QueryRow(cmd, item.Category)
+			err = row.Scan(&categoryID)
+			if err !=  nil{
+				return err
+			}
+		}else{
+			return err
+		}
 	}
 
-	_, err = f.Write(output)
+	cmd2 := "INSERT INTO items (name, category_id,image_name) VALUES ($1, $2, $3)"
+	_, err = db.Exec(cmd2, item.Name, categoryID, item.Image)
 	if err != nil{
 		return err
 	}
+	
+
+	
+
 	return c.JSON(http.StatusOK, res)
 }
 
@@ -119,40 +146,62 @@ func getImg(c echo.Context) error {
 
 func getItems(c echo.Context) error{
 	var items Items
-	jsonBytes, err := os.ReadFile("items.json")
+	db, err := sql.Open("sqlite3","/Users/hiramatsuaoi/Documents/mercari-build-training/db/mercari.sqlite3")
 	if err != nil{
 		return err
 	}
+	defer db.Close()
 	
-	err = json.Unmarshal(jsonBytes, &items)
+	rows, err := db.Query("SELECT items.name, categories.name, items.image_name FROM items JOIN categories ON items.category_id = categories.id")
 	if err != nil{
 		return err
+	}
+	defer rows.Close()
+
+	for rows.Next(){
+		var name, category, image string
+		if err := rows.Scan(&name, &category, &image);
+		err != nil{
+			return err
+		}
+		item := Item{Name: name, Category: category, Image: image}
+		items.Items = append(items.Items, item)
 	}
 
 	return c.JSON(http.StatusOK, items)
 }
 
 func getItemsById(c echo.Context) error{
-	id, _ := strconv.Atoi(c.Param("id"))
-	jsonFile, err := os.Open("items.json")
+	var items Items
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil{
-		c.Logger().Errorf("Error opening file: %s", err)
-		res := Response{Message: "Error opening file"}
-		return c.JSON(http.StatusInternalServerError,res)
+		return nil
+	}
+	db, err := sql.Open("sqlite3","/Users/hiramatsuaoi/Documents/mercari-build-training/db/mercari.sqlite3")
+
+	if err != nil{
+		return err
+	}
+	defer db.Close()
+
+	cmd := "SELECT items.name, categories.name, items.image_name FROM items JOIN categories ON items.category_id = categories.id WHERE items.id LIKE ?"
+	rows, err := db.Query(cmd, id)
+	if err != nil{
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next(){
+		var name, category, image string
+		if err := rows.Scan(&name, &category, &image); err != nil{
+			return err
+		}
+		item := Item{Name: name, Category: category, Image: image}
+		items.Items = append(items.Items, item)
 	}
 
-	defer jsonFile.Close()
-
-	jsonData := Items{}
-	err = json.NewDecoder(jsonFile).Decode(&jsonData)
-	if err != nil{
-		c.Logger().Errorf("Error decoding file: %s", err)
-		res := Response{Message: "Error decoding file"}
-
-		return c.JSON(http.StatusInternalServerError, res)
-	}
-
-	return c.JSON(http.StatusOK, jsonData.Items[id-1])
+	
+	return c.JSON(http.StatusOK, items.Items[id-1])
 
 
 
