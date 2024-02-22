@@ -45,6 +45,8 @@ func root(c echo.Context) error {
 
 func addItem(c echo.Context) error {
 	var items Items
+	var categoryID int
+	const getCategoryFromNameQuery = "SELECT id FROM categories WHERE name = $1"
 	// Get form data
 	name := c.FormValue("name")
 	category := c.FormValue("category")
@@ -93,10 +95,7 @@ func addItem(c echo.Context) error {
 	}
 	defer db.Close()
 
-	var categoryID int
-
-	cmd := "SELECT id FROM categories WHERE name = $1"
-	row := db.QueryRow(cmd, item.Category)
+	row := db.QueryRow(getCategoryFromNameQuery, item.Category)
 	err = row.Scan(&categoryID)
 	if err != nil{
 		if err == sql.ErrNoRows{
@@ -104,7 +103,7 @@ func addItem(c echo.Context) error {
 			if err != nil{
 				return err
 			}
-			row := db.QueryRow(cmd, item.Category)
+			row := db.QueryRow(getCategoryFromNameQuery, item.Category)
 			err = row.Scan(&categoryID)
 			if err !=  nil{
 				return err
@@ -208,6 +207,33 @@ func getItemsById(c echo.Context) error{
 
 }
 
+func searchItem(c echo.Context) error{
+	var items Items
+	keyword := c.FormValue("keyword")
+	db, err := sql.Open("sqlite3","/Users/hiramatsuaoi/Documents/mercari-build-training/db/mercari.sqlite3")
+	if err != nil{
+		return err
+	}
+	defer db.Close()
+
+	cmd := "SELECT items.name, categories.name, items.image_name FROM items JOIN categories ON items.category_id = categories.id WHERE items.name LIKE ?"
+	rows, err := db.Query(cmd, "%"+keyword+"%")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name, category, image string
+		if err := rows.Scan(&name, &category, &image); err != nil {
+			return err
+		}
+		item := Item{Name: name, Category: category, Image: image}
+		items.Items = append(items.Items, item)
+	}
+	return c.JSON(http.StatusOK, items)
+}
+
 
 
 func main() {
@@ -233,6 +259,7 @@ func main() {
 	e.GET("/items",getItems)
 	e.GET("/image/:imageFilename", getImg)
 	e.GET("/items/:id",getItemsById)
+	e.GET("/serach",searchItem)
 
 
 
