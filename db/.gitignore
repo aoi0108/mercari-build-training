@@ -1,1 +1,4 @@
-*.sqlite3
+.DS_Store
+*.jpg
+go/go.sum
+go/items.json
