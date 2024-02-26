@@ -57,13 +57,16 @@ func addItem(c echo.Context) error {
 	defer src.Close()
 
 	hash := sha256.New()
+	if _, err := io.Copy(hash, src); err != nil {
+        return err
+    }
 	hashInBytes := hash.Sum(nil)
 
 	hashString := hex.EncodeToString(hashInBytes)
 
 	image_jpg := hashString +".jpg"
 
-	new_image, err := os.Create("images/"+image_jpg)
+	new_image, err := os.Create("/Users/Documents/mercari-build-traning/go/images/"+image_jpg)
 	if err != nil{
 		return err
 	}
@@ -79,7 +82,7 @@ func addItem(c echo.Context) error {
 	res := Response{Message :message}
 	items.Items = append(items.Items, item)
 
-	f, err := os.OpenFile("items.json",os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile("/Users/Documents/mercari-build-traning/go/items.json",os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil{
 		return err
 	}
