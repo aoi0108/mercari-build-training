@@ -17,7 +17,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/labstack/gommon/log"
 
-	//_"github.com/mattn/go-sqlite3"
+	_"github.com/mattn/go-sqlite3"
 )
 
 const (
@@ -88,7 +88,7 @@ func addItem(c echo.Context) error {
 
 	items.Items = append(items.Items, item)
 
-	db, err := sql.Open("sqlite3","/Users/hiramatsuaoi/Documents/mercari-build-training/db/mercari.sqlite3")
+	db, err := sql.Open("sqlite3","/Users/Documents/mercari-build-training/db/mercari.sqlite3")
 
 	if err != nil{
 		return err
@@ -145,7 +145,7 @@ func getImg(c echo.Context) error {
 
 func getItems(c echo.Context) error{
 	var items Items
-	db, err := sql.Open("sqlite3","/Users/hiramatsuaoi/Documents/mercari-build-training/db/mercari.sqlite3")
+	db, err := sql.Open("sqlite3","/Users/Documents/mercari-build-training/db/mercari.sqlite3")
 	if err != nil{
 		return err
 	}
@@ -176,7 +176,7 @@ func getItemsById(c echo.Context) error{
 	if err != nil{
 		return nil
 	}
-	db, err := sql.Open("sqlite3","/Users/hiramatsuaoi/Documents/mercari-build-training/db/mercari.sqlite3")
+	db, err := sql.Open("sqlite3","/Users/Documents/mercari-build-training/db/mercari.sqlite3")
 
 	if err != nil{
 		return err
@@ -210,7 +210,7 @@ func getItemsById(c echo.Context) error{
 func searchItem(c echo.Context) error{
 	var items Items
 	keyword := c.FormValue("keyword")
-	db, err := sql.Open("sqlite3","/Users/hiramatsuaoi/Documents/mercari-build-training/db/mercari.sqlite3")
+	db, err := sql.Open("sqlite3","/Users/Documents/mercari-build-training/db/mercari.sqlite3")
 	if err != nil{
 		return err
 	}
@@ -259,10 +259,12 @@ func main() {
 	e.GET("/items",getItems)
 	e.GET("/image/:imageFilename", getImg)
 	e.GET("/items/:id",getItemsById)
-	e.GET("/serach",searchItem)
+	e.GET("/search",searchItem)
 
 
 
 	// Start server
 	e.Logger.Fatal(e.Start(":9000"))
 }
+
+
