@@ -6,15 +6,33 @@ import (
 	"os"
 	"path"
 	"strings"
+	"strconv"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"io"
+
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/labstack/gommon/log"
+
+	_"github.com/mattn/go-sqlite3"
 )
 
 const (
 	ImgDir = "images"
 )
+
+type Item struct {
+	Name string `json:"name"`
+	Category string `json:"category"`
+	Image string `json:"image_name"`
+}
+
+type Items struct {
+	Items [] Item `json:"items"`
+} 
 
 type Response struct {
 	Message string `json:"message"`
@@ -26,12 +44,83 @@ func root(c echo.Context) error {
 }
 
 func addItem(c echo.Context) error {
+	var items Items
+	var categoryID int
+	const getCategoryFromNameQuery = "SELECT id FROM categories WHERE name = $1"
 	// Get form data
 	name := c.FormValue("name")
-	c.Logger().Infof("Receive item: %s", name)
+	category := c.FormValue("category")
+	image, err := c.FormFile("image")
+	if err != nil{
+		return err
+	}
 
-	message := fmt.Sprintf("item received: %s", name)
+	src, err := image.Open()
+	if err != nil{
+		return err
+	}
+	defer src.Close()
+
+	hash := sha256.New()
+
+	hashInBytes := hash.Sum(nil)
+
+	hashString := hex.EncodeToString(hashInBytes)
+
+	image_jpg := hashString + ".jpg"
+
+	new_image, err := os.Create("images/" + image_jpg)
+	if err != nil{
+		return err
+	}
+
+	if _, err := io.Copy(new_image, src); err != nil{
+		return err
+	}
+
+	item := Item{Name: name, Category: category, Image: image_jpg}
+
+
+	c.Logger().Infof("Receive item: %s, %s", item.Name, item.Category, item.Image)
+	message := fmt.Sprintf("item received: %s, %s, %s", item.Name, item.Category, item.Image)
+	
 	res := Response{Message: message}
+
+	items.Items = append(items.Items, item)
+
+	db, err := sql.Open("sqlite3","/Users/Documents/mercari-build-training/db/mercari.sqlite3")
+
+	if err != nil{
+		return err
+	}
+	defer db.Close()
+
+	row := db.QueryRow(getCategoryFromNameQuery, item.Category)
+	err = row.Scan(&categoryID)
+	if err != nil{
+		if err == sql.ErrNoRows{
+			_, err = db.Exec("INSERT INTO categories (name) VALUES ($1)", item.Category)
+			if err != nil{
+				return err
+			}
+			row := db.QueryRow(getCategoryFromNameQuery, item.Category)
+			err = row.Scan(&categoryID)
+			if err !=  nil{
+				return err
+			}
+		}else{
+			return err
+		}
+	}
+
+	cmd2 := "INSERT INTO items (name, category_id,image_name) VALUES ($1, $2, $3)"
+	_, err = db.Exec(cmd2, item.Name, categoryID, item.Image)
+	if err != nil{
+		return err
+	}
+	
+
+	
 
 	return c.JSON(http.StatusOK, res)
 }
@@ -50,6 +139,102 @@ func getImg(c echo.Context) error {
 	}
 	return c.File(imgPath)
 }
+
+
+
+
+func getItems(c echo.Context) error{
+	var items Items
+	db, err := sql.Open("sqlite3","/Users/Documents/mercari-build-training/db/mercari.sqlite3")
+	if err != nil{
+		return err
+	}
+	defer db.Close()
+	
+	rows, err := db.Query("SELECT items.name, categories.name, items.image_name FROM items JOIN categories ON items.category_id = categories.id")
+	if err != nil{
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next(){
+		var name, category, image string
+		if err := rows.Scan(&name, &category, &image);
+		err != nil{
+			return err
+		}
+		item := Item{Name: name, Category: category, Image: image}
+		items.Items = append(items.Items, item)
+	}
+
+	return c.JSON(http.StatusOK, items)
+}
+
+func getItemsById(c echo.Context) error{
+	var items Items
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil{
+		return nil
+	}
+	db, err := sql.Open("sqlite3","/Users/Documents/mercari-build-training/db/mercari.sqlite3")
+
+	if err != nil{
+		return err
+	}
+	defer db.Close()
+
+	cmd := "SELECT items.name, categories.name, items.image_name FROM items JOIN categories ON items.category_id = categories.id WHERE items.id LIKE ?"
+	rows, err := db.Query(cmd, id)
+	if err != nil{
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next(){
+		var name, category, image string
+		if err := rows.Scan(&name, &category, &image); err != nil{
+			return err
+		}
+		item := Item{Name: name, Category: category, Image: image}
+		items.Items = append(items.Items, item)
+	}
+
+	
+	return c.JSON(http.StatusOK, items.Items[id-1])
+
+
+
+
+}
+
+func searchItem(c echo.Context) error{
+	var items Items
+	keyword := c.FormValue("keyword")
+	db, err := sql.Open("sqlite3","/Users/Documents/mercari-build-training/db/mercari.sqlite3")
+	if err != nil{
+		return err
+	}
+	defer db.Close()
+
+	cmd := "SELECT items.name, categories.name, items.image_name FROM items JOIN categories ON items.category_id = categories.id WHERE items.name LIKE ?"
+	rows, err := db.Query(cmd, "%"+keyword+"%")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name, category, image string
+		if err := rows.Scan(&name, &category, &image); err != nil {
+			return err
+		}
+		item := Item{Name: name, Category: category, Image: image}
+		items.Items = append(items.Items, item)
+	}
+	return c.JSON(http.StatusOK, items)
+}
+
+
 
 func main() {
 	e := echo.New()
@@ -71,9 +256,15 @@ func main() {
 	// Routes
 	e.GET("/", root)
 	e.POST("/items", addItem)
+	e.GET("/items",getItems)
 	e.GET("/image/:imageFilename", getImg)
+	e.GET("/items/:id",getItemsById)
+	e.GET("/search",searchItem)
+
 
 
 	// Start server
 	e.Logger.Fatal(e.Start(":9000"))
 }
+
+
